@@ -3,6 +3,7 @@ import sys_msgs
 import requests
 import trafilatura
 from bs4 import BeautifulSoup
+import json
 
 from colorama import init, Fore, Style
 
@@ -44,47 +45,40 @@ def query_generator():
     return response['message']['content']
     
 
-def duckduckgo_search(query):
-    headers ={
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
-        #https://github.com/SandorSeres/ChaGPTBased/blob/dfa1fbd8164df1945f7086414531dc78b69167f6/mail_demo.py
+def serp_search(query):
+    url = "https://google.serper.dev/search"
+    payload = json.dumps({
+        "q": query
+    })
+    headers = {
+        'X-API-KEY': 'be3568e6dc1fb5cb733b691379c48c6cbe398478',
+        'Content-Type': 'application/json'
     }
-    url = f'https://duckduckgo.com/html/?q={query}'
 
-    #this is the testing of the response 
-    #response = requests.get(url, headers=headers)
-    #print("Response Status Code:", response.status_code)  # NEW
-    #print("Response Text (First 600 chars):", response.text[:600])  # NEW
-    #response.raise_for_status()
-    #end of testing
+    try:
+        response = requests.request("POST", url, headers=headers, data=payload)
+        response.raise_for_status()
+        print(response)
 
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    print(response)
-    
-    soup = BeautifulSoup(response.text, 'html.parser')
-    results = []
+        results = []
+        data = response.json()
 
-    for i, result in enumerate(soup.find_all('div',class_='result'), start=1):
-        if i > 10:
-            break
-        title_tag = result.find('a',class_='result__a')
-        if not title_tag:
-            continue
+        for i, result in enumerate(data.get('organic', []), start=1):
+            if i > 10:
+                break
+            link = result.get('link')
+            snippet = result.get('snippet', 'No description available')
 
-        link = title_tag['href']
-        snippet_tag = result.find('a',class_='result__snippet')
-        snippet = snippet_tag.text.strip() if snippet_tag else 'No description available'
+            results.append({
+                'id': i,
+                'link': link,
+                'search_description': snippet
+            })
 
-        results.append({
-            'id': i,
-            'link'  : link,
-            'search_description': snippet
-            #print(results)
-        })
-
-    
-    return results
+        return results
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
+        return []
 
 
 def best_search_result(s_results, query):
@@ -97,16 +91,20 @@ def best_search_result(s_results, query):
                 model='llama3.2:latest',
                 messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': best_msg}]
             )
-            return int(response['message']['content'])    
-        except:
+            best_result_index = int(response['message']['content'])
+            if 0 <= best_result_index < len(s_results):
+                return best_result_index
+        except Exception as e:
+            print(f"An error occurred while determining the best search result: {e}")
             continue
-    return 0    
+    return 0
 
 def scrape_webpage(url):
     try:
         downloaded = trafilatura.fetch_url(url=url)
         return trafilatura.extract(downloaded, include_formatting=True, include_links=True)
     except Exception as e:
+        print(f"An error occurred while scraping the webpage: {e}")
         return None
 
 def ai_search():
@@ -117,21 +115,23 @@ def ai_search():
     if search_query[0] == '"':
         search_query = search_query[1:-1]
 
-    search_results = duckduckgo_search(search_query)
+    search_results = serp_search(search_query)
     context_found = False
+    print(search_query)
+    print(search_results)
 
     while not context_found and len(search_results) > 0:
-        best_result = best_search_result(s_results=search_results,query=search_query)
-        try:
-            page_link= search_results[best_result]['link']
-        except:
+        best_result = best_search_result(search_results, search_query)
+        if best_result < len(search_results):
+            page_link = search_results[best_result]['link']
+        else:
             print('FAILED TO SELECT BEST SEARCH RESULT, TRYING AGAIN')
-            continue    
+            continue
         
         page_text = scrape_webpage(page_link)
         search_results.pop(best_result)
 
-        if page_text and contains_data_needed(search_content = page_text,query =search_query):
+        if page_text and contains_data_needed(search_content=page_text, query=search_query):
             context = page_text
             context_found = True
 
