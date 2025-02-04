@@ -117,8 +117,8 @@ def ai_search():
 
     search_results = serp_search(search_query)
     context_found = False
-    print(search_query)
-    print(search_results)
+    #print(search_query)
+    #print(search_results)
 
     while not context_found and len(search_results) > 0:
         best_result = best_search_result(search_results, search_query)
